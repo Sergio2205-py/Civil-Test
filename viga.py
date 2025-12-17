@@ -12,9 +12,6 @@ def calculoFlexion(
     acero,
     r
 ):
-    
-    ####### Cálculos generales #############
-
     # Cálculo del factor beta1
     if fc <= 280:
         beta1 = 0.85
@@ -23,70 +20,69 @@ def calculoFlexion(
     else:
         beta1 = 0.65
 
-    # Cálculo de la deformación inicial del concreto comprimido
-    E0 = round(Ecu * (1 - beta1), 5)
-
-    ### 1.1 Cálculo de acero minimo############
-
     d = h - r
 
-    aceroMinimo = 0.7 * ((math.sqrt(fc)) / (fy)) * b * d
-
-    ###1.2 Acero balanceado y acero máximo
+    aceroMinimo = 0.7 * ((math.sqrt(fc)) / fy) * b * d
     aceroBalanceado = (
-        b * d * (0.85 * beta1 * fc / fy) * ((Ecu) / (Ecu + fy / Es))
+        b * d * (0.85 * beta1 * fc / fy) * (Ecu / (Ecu + fy / Es))
     )
     aceroMaximo = 0.75 * aceroBalanceado
 
-    if  acero < aceroBalanceado:
-        ###1.3 Calculo de a, c y Mn
-
-        ### Asumiendo que el acero fluye (se debe verificar)
+    if acero < aceroBalanceado:
+        # Caso: acero fluye
         T = acero * fy
         a = T / (0.85 * fc * b)
         c = a / beta1
         Mn = T * (d - a / 2) / (1000 * 100)
         phiMn = phiFlexion * Mn
-
+        Cc = (0.85 * fc * b * a)/10**3   # <-- ahora también defines Cc aquí
     else:
+        # Caso: acero no fluye
         A = (0.85 * fc) / (Ecu * Es * (acero / (b * d)))
         B = d
         C = -beta1 * d * d
 
-        a = (
-            -B
-            + math.sqrt(B * B - 4 * A * C)
-        ) / (2 * A)
-
+        a = (-B + math.sqrt(B * B - 4 * A * C)) / (2 * A)
         c = a / beta1
+        Mn = (0.85 * fc * a * b * (d - a / 2)) / (1000 * 100)
+        phiMn = phiFlexion * Mn
+        Cc = (0.85 * fc * b * a)/10**3    # ya estaba aquí
 
-        Mn = (0.85 * fc * a * b * (d - a / 2) / (1000 * 100)
-        )
-        phiMn = phiFlexion * Mn   
-
-    if round(acero,2) < round(aceroBalanceado,2):
+    # Tipo de falla
+    if round(acero, 2) < round(aceroBalanceado, 2):
         tipoFalla = "Tracción"
-    elif round(acero,2) > round(aceroBalanceado,2):
+    elif round(acero, 2) > round(aceroBalanceado, 2):
         tipoFalla = "Compresión"
     else:
         tipoFalla = "Balanceada"
-        
-    defAs = Ecu * (d-c)/c
-    
-    
-    resultado = {}
-    resultado["aceroMinimo"] = f'{round(aceroMinimo, 2)} cm^2'
-    resultado["aceroBalanceado"] = f'{round(aceroBalanceado, 2)} cm^2'
-    resultado["aceroMaximo"] = f'{round(aceroMaximo, 2)} cm^2'
-    resultado["a"] = f'{round(a, 2)} cm'
-    resultado["c"] = f'{round(c, 2)} cm'
-    resultado["Mn"] = f'{round(Mn, 2)} ton-m'
-    resultado["phiMn"] = f'{round(phiMn, 2)} ton-m'
-    resultado["tipoFalla"] = tipoFalla
-    resultado["defAs"] = f'{round(defAs, 5)}'
-    resultado["c_value"] = c
+
+    defAs = round(Ecu * (d - c) / c, 6)
+
+    resultado = {
+        "beta1": beta1,
+        "d": d,
+        "aceroMinimo_val": aceroMinimo,
+        "aceroBalanceado_val": aceroBalanceado,
+        "aceroMaximo_val": aceroMaximo,
+        "a_val": a,
+        "c_val": c,
+        "Mn_val": Mn,
+        "phiMn_val": phiMn,
+        "defAs": defAs,
+        "Cc_val": Cc,
+        "aceroMinimo": f"{aceroMinimo:.2f} cm²",
+        "aceroBalanceado": f"{aceroBalanceado:.2f} cm²",
+        "aceroMaximo": f"{aceroMaximo:.2f} cm²",
+        "a": f"{a:.2f} cm",
+        "c": f"{c:.2f} cm",
+        "Mn": f"{Mn:.2f} ton·m",
+        "phiMn": f"{phiMn:.2f} ton·m",
+        "tipoFalla": tipoFalla,
+        "Cc": f"{Cc:.2f} kgf"
+    }
 
     return resultado
+
 
 
 tablaAceros = pd.DataFrame(
@@ -172,7 +168,8 @@ def calculoFlexionDoble(
     r_comp
 ):
     """
-    Cálculo de viga a flexión DOBLE
+    Flexión DOBLE: acero inferior (tracción) que fluye y acero superior (compresión) que NO fluye.
+    Se resuelve c con una cuadrática derivada del equilibrio de fuerzas.
     """
 
     # Parámetros del concreto
@@ -183,61 +180,66 @@ def calculoFlexionDoble(
     else:
         beta1 = 0.65
 
-    d_trac = h - r_trac
-    d_comp = r_comp
+    # Peraltes efectivos
+    d_trac = h - r_trac   # acero inferior
+    d_comp = r_comp       # acero superior (d')
 
-    # Iteración para encontrar c
-    c = 0.1 * h
-    tol = 1e-3
-    max_iter = 100
+    # Coeficientes de la cuadrática en c
+    A = 0.85 * fc * beta1 * b
+    B = As_comp * Es * Ecu - As_trac * fy
+    C = -As_comp * Es * Ecu * d_comp
 
-    for _ in range(max_iter):
-        a = beta1 * c
-        eps_s = Ecu * (d_trac - c) / c
-        eps_sp = Ecu * (c - d_comp) / c
+    # Solución de c (usar la raíz positiva)
+    discriminante = B**2 - 4 * A * C
+    c = (-B + math.sqrt(discriminante)) / (2 * A)
 
-        fs = fy if eps_s >= fy / Es else Es * eps_s
-        fs_p = min(Es * eps_sp, fy)
+    # Derivados
+    a = beta1 * c
+    eps_s = Ecu * (d_trac - c) / c           # deformación acero tracción
+    eps_sp = Ecu * (c - d_comp) / c          # deformación acero compresión
 
-        T = As_trac * fs
-        Cc = 0.85 * fc * b * a
-        Cs = As_comp * fs_p
+    # Esfuerzos del acero
+    fs = min(Es * eps_s, fy)
+    fs_p = min(Es * eps_sp, fy)
 
-        error = T - (Cc + Cs)
-
-        if abs(error) < tol:
-            break
-
-        c += error / (0.85 * fc * b)
-        c = max(c, tol)
+    # Fuerzas
+    T = As_trac * fs
+    Cc = 0.85 * fc * b * a
+    Cs = As_comp * fs_p
 
     # Momento nominal
     Mn = (Cc * (d_trac - a / 2) + Cs * (d_trac - d_comp)) / (1000 * 100)
     phiMn = phiFlexion * Mn
 
-    # Tipo de falla
-    if eps_s >= 0.005:
-        tipoFalla = "Tracción"
-    else:
-        tipoFalla = "Compresión"
+    # Tipo de falla (criterio por εs)
+    tipoFalla = "Tracción" if eps_s >= 0.005 else "Compresión"
 
     # Aceros de referencia
-    As_min = 0.25 * (fc ** 0.5) / fy * b * d_trac
-    eps_y = fy / 2000000
-    c_bal = (0.003 / (0.003 + eps_y)) * d_trac
+    As_min = 0.7 * (fc ** 0.5) / fy * b * d_trac
+    eps_y = fy / Es
+    c_bal = (Ecu / (Ecu + eps_y)) * d_trac
     a_bal = beta1 * c_bal
     As_bal = 0.85 * fc * b * a_bal / fy
     As_max = 0.75 * As_bal
 
-    # Retorno como diccionario (compatible con appweb.py)
     resultado = {
+        "beta1": beta1,
+        "d": d_trac,
+        "aceroMinimo_val": As_min,
+        "aceroBalanceado_val": As_bal,
+        "aceroMaximo_val": As_max,
+        "a_val": a,
+        "c_val": c,
+        "phiMn_val": phiMn,
+        "defAs": round(eps_s, 5),
+        "Cc_val": Cc/10**3,
+        "Mn_val": Mn,
         "aceroMinimo": f"{As_min:.2f} cm²",
         "aceroBalanceado": f"{As_bal:.2f} cm²",
         "aceroMaximo": f"{As_max:.2f} cm²",
         "a": f"{a:.2f} cm",
         "c": f"{c:.2f} cm",
-        "phiMn": f"{phiMn:.2f} ton-m",
-        "defAs": f"{eps_s:.5f}",
+        "phiMn": f"{phiMn:.2f} ton·m",
         "tipoFalla": tipoFalla
     }
 

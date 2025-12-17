@@ -118,7 +118,6 @@ if As_comp > 0:
 else:
     tipoFlexion = "simple"
 
-
 # ---------- ACERO INFERIOR (TRACCIÓN / POSITIVO) ----------
 st.markdown(
     "<h4 style='margin-bottom:-30px; margin-top:-30px;'>🔽 Acero inferior (tracción)</h4>",
@@ -167,7 +166,6 @@ b_min, n_barras = viga.ancho_minimo_acero(
     sep_min_aci=2.54
 )
 
-st.markdown("---")
 st.markdown("### 📐 Resumen de áreas de acero")
 
 colA, colB = st.columns(2)
@@ -223,24 +221,33 @@ def graficoSeccion(b, h, r):
     c = float(calculoViga["c"].replace("cm", "").strip())
     ax.fill_between([0, b], h - c, h, color='gray', alpha=0.4)
 
-    # ---------------- ACERO INFERIOR (TRACCIÓN) ----------------
-    ax.fill_between([6, b - 6], r, r + 3, color='black')
+    # ---------------- ACERO INFERIOR ----------------
+    alto_barra = 3
+    ancho_barra = b - 2*r
+
+    ax.fill_between([r, r + ancho_barra], r, r + alto_barra, color='black')
     ax.text(
         b / 2,
-        r + 4,
+        r + alto_barra + 1,
         f'$A_s={As_trac} \\, cm^2$',
         ha='center',
         color='red'
     )
 
-    # ---------------- ACERO SUPERIOR (COMPRESIÓN) ----------------
+    # ---------------- ACERO SUPERIOR ----------------
     if As_comp > 0:
-        y_sup = h - r - 3  # posición vertical del acero superior
+        y_sup = h - r - alto_barra
 
-        ax.fill_between([6, b - 6], y_sup, y_sup + 3, color='blue')
+        ax.fill_between(
+            [r, r + ancho_barra],
+            y_sup,
+            y_sup + alto_barra,
+            color='blue'
+        )
+
         ax.text(
             b / 2,
-            y_sup - 3,
+            y_sup - 2,
             f"$A'_s={As_comp} \\, cm^2$",
             ha='center',
             color='blue'
@@ -250,6 +257,7 @@ def graficoSeccion(b, h, r):
     ax.axis("off")
 
     return fig
+
 
 # ---------- CARDS (LAYOUT PRINCIPAL) ----------
 col_fig, col_cards = st.columns([1.3, 1])
@@ -299,6 +307,83 @@ with col_cards:
         card("c", calculoViga["c"])
         card("ØMn", calculoViga["phiMn"])
         card("εs", calculoViga["defAs"])
+
+    # ---------- DETALLE DE CÁLCULOS ----------
+with st.expander("📐 Ver cálculos"):
+
+    st.markdown("### 🔹 Parámetros del concreto")
+
+    st.latex(r"""
+    \beta_1 =
+    \begin{cases}
+    0.85 & f'_c \le 280 \\
+    1.05 - 0.714 \frac{f'_c}{1000} & 280 < f'_c \le 560 \\
+    0.65 & f'_c > 560
+    \end{cases}
+    """)
+
+    st.markdown(f"**β₁ = {calculoViga['beta1']}**")
+
+    st.divider()
+
+    st.markdown("### 🔹 Peralte efectivo (As tracción)")
+
+    st.latex(r"d = h - r")
+    st.markdown(
+        f"d = {h} − {r} = **{calculoViga['d']:.2f} cm**"
+    )
+
+    st.divider()
+
+    st.markdown("### 🔹 Acero mínimo (As tracción)")
+
+    st.latex(r"""
+    A_{s,min} = 0.7 \frac{\sqrt{f'_c}}{f_y} b d
+    """)
+
+    st.markdown(
+        f"Aₛ,min = **{calculoViga['aceroMinimo_val']:.2f} cm²**"
+    )
+
+    st.divider()
+
+    st.markdown("### 🔹 Acero balanceado (As tracción)")
+
+    st.latex(r"""
+    A_{s,bal} =
+    b d \left(\frac{0.85 \beta_1 f'_c}{f_y}\right)
+    \left(\frac{\varepsilon_{cu}}{\varepsilon_{cu} + f_y/E_s}\right)
+    """)
+
+    st.markdown(
+        f"Aₛ,bal = **{calculoViga['aceroBalanceado_val']:.2f} cm²**"
+    )
+
+    st.divider()
+
+    st.markdown("### 🔹 Compresión del concreto")
+
+    st.latex(r"""
+    C_c = 0.85 \, f'_c \, b \, a
+    """)
+
+    st.markdown(
+        f"Cc = **{calculoViga['Cc_val']:.2f} tonf**"
+    )
+
+    st.divider()
+
+    st.markdown("### 🔹 Momento nominal")
+
+    st.latex(r"""
+    M_n = T(d - a/2) \quad \text{o} \quad
+    M_n = C_c(d - a/2) + C_s(d - d')
+    """)
+
+    st.markdown(
+        f"Mₙ = **{calculoViga['Mn_val']:.2f} ton·m**"
+    )
+
 
 # ------------------ GRÁFICO ESFUERZO-DEFORMACIÓN DEL ACERO A TRACCIÓN ------------------
 def graficoDeformacionAcero(defAs, fy, Es):

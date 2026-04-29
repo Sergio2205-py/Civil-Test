@@ -72,6 +72,15 @@ with st.sidebar:
     )
     phiFlexion = st.number_input("$\\phi_{flexión}$", value=0.9)
 
+    st.title("Solicitación")
+    Mu = st.number_input(
+        "Momento último Mu (ton·m)",
+        value=50.0,
+        min_value=0.0,
+        help="Momento flector último actuante en la sección"
+    )
+
+
     st.title("Disposición del acero")
     num_capas = st.radio(
     "Número de capas de acero",
@@ -117,6 +126,7 @@ if As_comp > 0:
     tipoFlexion = "doble"
 else:
     tipoFlexion = "simple"
+
 
 # ---------- ACERO INFERIOR (TRACCIÓN / POSITIVO) ----------
 st.markdown(
@@ -178,6 +188,10 @@ with colB:
 
 hay_acero_compresion = As_comp > 0
 
+# ---------- DISEÑO POR MOMENTO ÚLTIMO ----------
+As_req = None
+a_req = None
+
 # ---------- CÁLCULO DE FLEXIÓN ----------
 if tipoFlexion == "simple":
 
@@ -206,6 +220,21 @@ else:
         As_comp=As_comp,
         r_trac=r,
         r_comp=r
+    )
+
+# ---------- ACERO REQUERIDO POR Mu ----------
+As_req = None
+a_req = None
+
+if tipoFlexion == "simple":
+    As_req, a_req = viga.acero_requerido_flexion_simple_formula(
+        b=b,
+        h=h,
+        r=r,
+        fc=fc,
+        fy=fy,
+        phi=phiFlexion,
+        Mu=Mu
     )
 
 # ------------------ GRÁFICO DE SECCIÓN ------------------
@@ -258,14 +287,7 @@ def graficoSeccion(b, h, r):
 
     return fig
 
-
-# ---------- CARDS (LAYOUT PRINCIPAL) ----------
-col_fig, col_cards = st.columns([1.3, 1])
-
-with col_fig:
-    st.pyplot(graficoSeccion(b, h, r), use_container_width=True)
-
-# Cards
+# ---------- FUNCIÓN CARD ----------
 def card(titulo, valor):
     st.markdown(f"""
     <div class="card">
@@ -273,42 +295,117 @@ def card(titulo, valor):
         <div class="card-value">{valor}</div>
     </div>
     """, unsafe_allow_html=True)
+# ---------- DIBUJO ----------
+st.pyplot(graficoSeccion(b, h, r), use_container_width=True)
 
-with col_cards:
+# ---------- CARD ANCHO MÍNIMO ----------
+card("Ancho mínimo requerido", f"{round(b_min,2)} cm")
 
-    # --- Card ancho mínimo ---
-    card("Ancho mínimo requerido", f"{round(b_min,2)} cm")
+if b < b_min:
+    st.warning("⚠️ El ancho de la viga NO permite acomodar el acero en una sola capa")
+else:
+    st.success("✅ El acero cabe en una sola capa")
 
-    if b < b_min:
-        st.warning("⚠️ El ancho de la viga NO permite acomodar el acero en una sola capa")
+st.divider()
+st.divider()
+st.subheader("🧮 Diseño por momento último")
+
+phiMn = calculoViga["phiMn_val"]
+
+# ---------------- CARD PRINCIPAL ----------------
+card("Momento solicitado Mu", f"{Mu:.2f} ton·m")
+card("Resistencia φMn", f"{phiMn:.2f} ton·m")
+
+if phiMn >= Mu:
+    st.success("✅ La sección resiste el momento solicitado")
+else:
+    st.error("❌ La sección NO resiste el momento solicitado")
+
+# -------------------------------------------------
+# SOLO FLEXIÓN SIMPLE
+# -------------------------------------------------
+if tipoFlexion == "simple" and As_req is not None:
+
+    card("As requerido", f"{As_req:.2f} cm²")
+    card("As instalado", f"{As_trac:.2f} cm²")
+
+    ratio = As_trac / As_req
+
+    card("% acero colocado", f"{ratio*100:.1f}%")
+
+    if ratio >= 1.00:
+        st.success("✅ El acero colocado cumple totalmente")
+
+    elif ratio >= 0.90:
+        st.warning("⚠️ Dentro del margen permitido")
+
     else:
-        st.success("✅ El acero cabe en una sola capa")
+        st.error("❌ Acero insuficiente")
 
-    # --- Tipo de falla ---
-    color_falla = "#2ecc71" if calculoViga["tipoFalla"] == "Tracción" else "#e74c3c"
-    icono = "✔️" if calculoViga["tipoFalla"] == "Tracción" else "⚠️"
+    # NUEVO CONTROL Asmax
+    As_max = calculoViga["aceroMaximo_val"]
 
-    st.markdown(f"""
-    <h3 style="color:{color_falla};">
-    {icono} Tipo de falla: {calculoViga['tipoFalla']}
-    </h3>
-    """, unsafe_allow_html=True)
+    card("As máximo permitido", f"{As_max:.2f} cm²")
 
-    # --- Cards estructurales ---
-    colA, colB = st.columns(2)
+    if As_trac > As_max:
+        st.error("❌ Supera As máximo")
+    else:
+        st.success("✅ No supera As máximo")
 
-    with colA:
-        card("As mínimo", calculoViga["aceroMinimo"])
-        card("As balanceado", calculoViga["aceroBalanceado"])
-        card("As máximo", calculoViga["aceroMaximo"])
-        card("a", calculoViga["a"])
+# ---------------- TIPO DE FALLA ----------------
+color_falla = "#2ecc71" if calculoViga["tipoFalla"] == "Tracción" else "#e74c3c"
+icono = "✔️" if calculoViga["tipoFalla"] == "Tracción" else "⚠️"
 
-    with colB:
-        card("c", calculoViga["c"])
-        card("ØMn", calculoViga["phiMn"])
-        card("εs", calculoViga["defAs"])
+st.markdown(f"""
+<h3 style="color:{color_falla};">
+{icono} Tipo de falla: {calculoViga['tipoFalla']}
+</h3>
+""", unsafe_allow_html=True)
 
-    # ---------- DETALLE DE CÁLCULOS ----------
+# ---------------- RESULTADOS ----------------
+colA, colB = st.columns(2)
+
+with colA:
+    card("As mínimo", calculoViga["aceroMinimo"])
+    card("As balanceado", calculoViga["aceroBalanceado"])
+    card("As máximo", calculoViga["aceroMaximo"])
+    card("a", calculoViga["a"])
+    card("cb", calculoViga["cb"])
+
+with colB:
+    card("c", calculoViga["c"])
+    card("ØMn", calculoViga["phiMn"])
+    card("εs", calculoViga["defAs"])
+
+# ---------- INDICADOR c / cb ----------
+c_real = calculoViga["c_val"]
+cb = calculoViga["cb_val"]
+
+relacion = c_real / cb
+
+st.markdown("### 📊 Estado de ductilidad")
+
+# limitar barra visual a 100%
+valor_barra = min(relacion, 1.0)
+
+st.progress(valor_barra)
+
+st.markdown(f"**Relación c / cb = {relacion:.2f}**")
+
+if As_trac > calculoViga["aceroMaximo_val"]:
+    st.error("❌ Acero instalado supera As máximo permitido")
+
+elif relacion < 0.75:
+    st.success("✅ Sección dúctil (subreforzada)")
+
+elif relacion <= 1.0:
+    st.warning("⚠️ Cercana al estado balanceado")
+
+else:
+    st.error("❌ Sección sobrerreforzada")
+
+
+# ---------- DETALLE DE CÁLCULOS ----------
 with st.expander("📐 Ver cálculos"):
 
     st.markdown("### 🔹 Parámetros del concreto")
@@ -341,19 +438,24 @@ with st.expander("📐 Ver cálculos"):
     A_{s,min} = 0.7 \frac{\sqrt{f'_c}}{f_y} b d
     """)
 
-    st.markdown(
-        f"Aₛ,min = **{calculoViga['aceroMinimo_val']:.2f} cm²**"
-    )
-
-    st.divider()
-
     st.markdown("### 🔹 Acero balanceado (As tracción)")
 
-    st.latex(r"""
-    A_{s,bal} =
-    b d \left(\frac{0.85 \beta_1 f'_c}{f_y}\right)
-    \left(\frac{\varepsilon_{cu}}{\varepsilon_{cu} + f_y/E_s}\right)
-    """)
+    if tipoFlexion == "simple":
+
+        st.latex(r"""
+        A_{s,bal} =
+        b d \left(\frac{0.85 \beta_1 f'_c}{f_y}\right)
+        \left(\frac{\varepsilon_{cu}}
+        {\varepsilon_{cu}+f_y/E_s}\right)
+        """)
+
+    else:
+
+        st.latex(r"""
+        A_{s,bal} f_y =
+        0.85 f'_c b a_{bal}
+        + A'_s f'_s
+        """)
 
     st.markdown(
         f"Aₛ,bal = **{calculoViga['aceroBalanceado_val']:.2f} cm²**"
@@ -384,6 +486,21 @@ with st.expander("📐 Ver cálculos"):
         f"Mₙ = **{calculoViga['Mn_val']:.2f} ton·m**"
     )
 
+    st.divider()
+
+    st.markdown("### 🔹 Eje neutro balanceado")
+
+    st.latex(r"""
+    c_b =
+    d\left(
+    \frac{\varepsilon_{cu}}
+    {\varepsilon_{cu}+\varepsilon_y}
+    \right)
+    """)
+
+    st.markdown(
+        f"c_b = **{calculoViga['cb_val']:.2f} cm**"
+    )
 
 # ------------------ GRÁFICO ESFUERZO-DEFORMACIÓN DEL ACERO A TRACCIÓN ------------------
 def graficoDeformacionAcero(defAs, fy, Es):
@@ -408,6 +525,15 @@ def graficoDeformacionAcero(defAs, fy, Es):
         name='Estado del acero',
         marker=dict(color='red', size=10)
     ))
+    # ---- Línea vertical ε = 0.005 (límite ductilidad E.060) ----
+    fig.add_vline(
+        x=0.005,
+        line_width=2,
+        line_dash="dash",
+        line_color="gray",
+        annotation_text="(Límite dúctil E.060)",
+        annotation_position="top"
+        )
 
     fig.update_layout(
         title="Gráfico Deformación del acero a tracción",

@@ -22,10 +22,12 @@ def calculoFlexion(
 
     d = h - r
 
+    eps_y = fy / Es
+    cb = d * Ecu / (Ecu + eps_y)
+    ab = beta1 * cb 
+
     aceroMinimo = 0.7 * ((math.sqrt(fc)) / fy) * b * d
-    aceroBalanceado = (
-        b * d * (0.85 * beta1 * fc / fy) * (Ecu / (Ecu + fy / Es))
-    )
+    aceroBalanceado = 0.85 * fc * b * ab / fy
     aceroMaximo = 0.75 * aceroBalanceado
 
     if acero < aceroBalanceado:
@@ -66,6 +68,8 @@ def calculoFlexion(
         "aceroMaximo_val": aceroMaximo,
         "a_val": a,
         "c_val": c,
+        "cb_val": cb,
+        "cb": f"{cb:.2f} cm",
         "Mn_val": Mn,
         "phiMn_val": phiMn,
         "defAs": defAs,
@@ -83,7 +87,38 @@ def calculoFlexion(
 
     return resultado
 
+def acero_requerido_flexion_simple_formula(
+    b, h, r, fc, fy, phi, Mu
+):
+    """
+    Calcula As requerido para sección rectangular
+    reforzada simple a partir de Mu.
+    """
 
+    d = h - r
+
+    Mn = Mu / phi   # ton-m
+
+    # pasar a kgf-cm
+    Mn = Mn * 1000 * 100
+
+    A = fy**2 / (2 * 0.85 * fc * b)
+    B = -fy * d
+    C = Mn
+
+    discriminante = B**2 - 4*A*C
+
+    if discriminante < 0:
+        return None, None
+
+    As1 = (-B - discriminante**0.5) / (2*A)
+    As2 = (-B + discriminante**0.5) / (2*A)
+
+    As = min(x for x in [As1, As2] if x > 0)
+
+    a = As * fy / (0.85 * fc * b)
+
+    return round(As,2), round(a,2)
 
 tablaAceros = pd.DataFrame(
     {
@@ -168,7 +203,7 @@ def calculoFlexionDoble(
     r_comp
 ):
     """
-    Flexión DOBLE: acero inferior (tracción) que fluye y acero superior (compresión) que NO fluye.
+    Flexión DOBLE: acero inferior y superior evaluados por compatibilidad de deformaciones
     Se resuelve c con una cuadrática derivada del equilibrio de fuerzas.
     """
 
@@ -210,16 +245,27 @@ def calculoFlexionDoble(
     # Momento nominal
     Mn = (Cc * (d_trac - a / 2) + Cs * (d_trac - d_comp)) / (1000 * 100)
     phiMn = phiFlexion * Mn
-
+    
     # Tipo de falla (criterio por εs)
     tipoFalla = "Tracción" if eps_s >= 0.005 else "Compresión"
 
     # Aceros de referencia
+    # Acero mínimo
     As_min = 0.7 * (fc ** 0.5) / fy * b * d_trac
+    # Balanceado considerando acero a compresión
     eps_y = fy / Es
-    c_bal = (Ecu / (Ecu + eps_y)) * d_trac
-    a_bal = beta1 * c_bal
-    As_bal = 0.85 * fc * b * a_bal / fy
+    cb = (Ecu / (Ecu + eps_y)) * d_trac
+    ab = beta1 * cb
+    # deformación acero superior
+    eps_sp_bal = Ecu * (cb - d_comp) / cb
+    fs_p_bal = min(Es * eps_sp_bal, fy)
+
+    # compresiones
+    Cc_bal = 0.85 * fc * b * ab
+    Cs_bal = As_comp * fs_p_bal
+
+    # tracción balanceada requerida
+    As_bal = (Cc_bal + Cs_bal) / fy
     As_max = 0.75 * As_bal
 
     resultado = {
@@ -234,6 +280,8 @@ def calculoFlexionDoble(
         "defAs": round(eps_s, 5),
         "Cc_val": Cc/10**3,
         "Mn_val": Mn,
+        "cb_val": cb,
+        "cb": f"{cb:.2f} cm",
         "aceroMinimo": f"{As_min:.2f} cm²",
         "aceroBalanceado": f"{As_bal:.2f} cm²",
         "aceroMaximo": f"{As_max:.2f} cm²",
@@ -244,3 +292,27 @@ def calculoFlexionDoble(
     }
 
     return resultado
+
+def sugerir_acero(As_req):
+    mejores = []
+
+    for _, fila in tablaAceros.iterrows():
+        nombre = fila["Diametro"]
+        area = fila["Área(cm2)"]
+
+        for n in range(2, 9):   # de 2 a 8 barras
+            As_total = n * area
+
+            if As_total >= As_req:
+                exceso = As_total - As_req
+                mejores.append((exceso, n, nombre, As_total))
+
+    mejores.sort()
+
+    if mejores:
+        _, n, nombre, As_total = mejores[0]
+        return f"{n} barras de {nombre} = {As_total:.2f} cm²"
+
+    return "Sin sugerencia"
+
+
